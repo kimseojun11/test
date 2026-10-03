@@ -8,16 +8,15 @@ import argparse
 from pathlib import Path
 
 from preprocess.chunk import split_document
-from preprocess.load import load_document
+from preprocess.load import UnsupportedDocumentError, read_document
 from preprocess.normalize import VERSION
 
 
 def run(path: str | Path) -> None:
     doc_id = Path(path).stem
-    raw = load_document(path)
-    # TODO(팀장): --file 의 확장자를 fmt 로 넘긴다.
-    chunks = split_document(doc_id, raw)
-    print(f"[preprocess v{VERSION}] {doc_id}: {len(chunks)}개 청크")
+    doc = read_document(path)
+    chunks = split_document(doc_id, doc.text, fmt=doc.fmt)
+    print(f"[preprocess v{VERSION}] {doc_id} ({doc.fmt}, {doc.encoding}): {len(chunks)}개 청크")
     for c in chunks:
         print(f"  {c.chunk_id}: {len(c.text)}자")
 
@@ -26,7 +25,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="prompt-injection-protection 파이프라인")
     parser.add_argument("--file", required=True, help="검사할 문서 경로")
     args = parser.parse_args()
-    run(args.file)
+    try:
+        run(args.file)
+    except UnsupportedDocumentError as e:
+        parser.exit(2, f"오류: {e}\n")
 
 
 if __name__ == "__main__":
