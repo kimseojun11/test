@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.2.1"
 
 Label = Literal["benign", "injection"]
 Stage = Literal["preprocess", "rule", "stage1", "stage2"]
@@ -66,6 +66,7 @@ class TransformLog(_Model):
     tag_chars_decoded: int = Field(default=0, ge=0)  # 태그 문자 U+E0000~E007F
     bidi_removed: int = Field(default=0, ge=0)  # 방향 제어문자
     nfkc_changed: int = Field(default=0, ge=0)  # NFKC 로 바뀐 곳 수 (0.1.0 에서는 참/거짓)
+    jamo_assembled: int = Field(default=0, ge=0)  # 쪼갠 자모(ㄱㅗㅇ)를 조립해 만든 음절 수
     homoglyph_replaced: int = Field(default=0, ge=0)  # 닮은꼴 글자
     hidden_text_found: int = Field(default=0, ge=0)  # 숨김 텍스트. 지우지 않고 표시만 한다
     decoded_count: int = Field(default=0, ge=0)

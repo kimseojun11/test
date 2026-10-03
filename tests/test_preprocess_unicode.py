@@ -139,15 +139,6 @@ def test_nfkc_cases(raw, expected):
     assert normalize_text(raw) == expected
 
 
-def test_jamo_split_with_final_consonant_is_not_assembled():
-    """알려진 한계. NFKC 는 호환 자음을 항상 초성으로 바꿔서, 받침은 앞 음절에 붙지 않는다.
-
-    받침까지 조립하려면 한글 입력기 같은 규칙이 필요한데, 정상 텍스트("좋아ㅇㅋ" →
-    "좋앙ㅋ")까지 바꿔 버린다. 그래서 모델 입력에는 넣지 않는다 (가이드 '여유 시' 골격 보기 후보).
-    """
-    assert normalize_text("ㄱㅗㅇㄱㅕㄱ") == "고ㅇ겨ㄱ"
-
-
 def test_nfd_hangul_is_composed_and_span_covers_all_jamo():
     raw = unicodedata.normalize("NFD", "무시해")  # macOS 형태, 자모 6개
     chunk, log = _log(raw)

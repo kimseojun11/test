@@ -4,7 +4,7 @@
   ① 입력 디코딩 ......... load.py (바이트 → 문자열)
   ② 포맷 파싱 ........... TODO(3주차) HTML/MD 텍스트 추출, 엔티티 복원, 숨김 구간 표시
   ③ 유니코드 정규화 ..... unicode_steps.py  태그 문자 → 양방향 제어 → 보이지 않는 문자
-                                            → NFKC + 자모 후처리 → 공백 정리
+                                            → NFKC → 자모 조립 → 공백 정리
   ④ 홈글리프 ............ TODO(2주차) 문자 체계가 섞인 단어만
   ⑤ 인코딩 복원 ......... TODO(3주차) 결과는 decoded_segments 로 (본문에 섞지 않음)
   ⑦ 청킹 ................ chunk.py
@@ -27,6 +27,7 @@ from preprocess.context import Context, Event
 from preprocess.tracked import TrackedText
 from preprocess.unicode_steps import (
     apply_nfkc,
+    assemble_jamo,
     decode_tag_chars,
     remove_bidi,
     remove_invisible,
@@ -46,7 +47,7 @@ __all__ = [
 ]
 
 # 정규화 동작이 바뀔 때마다 올린다. 0.1 = 2주차 말 고정(3단계 학습용), 1.0 = 3주차 말
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 
 # 파이썬 버전마다 유니코드 데이터가 달라 NFKC 결과가 바뀔 수 있다 (3.11 = 14.0, 3.12 = 15.0).
 # 학습과 서빙이 같은 정규화를 거쳤는지 확인할 수 있게 청크 meta 에 같이 남긴다.
@@ -65,6 +66,7 @@ STEPS: list[Step] = [
     remove_bidi,
     remove_invisible,
     apply_nfkc,
+    assemble_jamo,
     tidy_whitespace,
 ]
 
