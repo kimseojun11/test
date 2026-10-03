@@ -11,7 +11,7 @@ TODO(2~3주차): text_windows() 를 3단계 모델 토크나이저 기준 384/50
 from collections import Counter
 from collections.abc import Sequence
 
-from common.schema import Chunk, DecodedSegment, Span, TransformLog
+from common.schema import Chunk, DecodedSegment, Span, TransformLog, TransformSpan
 from preprocess.normalize import NormalizedDoc, normalize_document
 
 
@@ -71,6 +71,7 @@ def _make_chunk(doc_id: str, doc: NormalizedDoc, k: int, start: int, end: int) -
         offset_map=[s - r0 for s in doc.starts[start:end]],
         decoded_segments=_segments_in(doc, r0, r1),
         transform_log=_log_in(doc, r0, r1),
+        transform_spans=_spans_in(doc, r0, r1),
         meta={
             "normalize_version": doc.version,
             "unicode_version": doc.unicode_version,
@@ -98,3 +99,22 @@ def _log_in(doc: NormalizedDoc, r0: int, r1: int) -> TransformLog:
         if name in counts:
             values[name] = counts[name] > 0 if info.annotation is bool else counts[name]
     return TransformLog(**values)
+
+
+def _spans_in(doc: NormalizedDoc, r0: int, r1: int) -> list[TransformSpan]:
+    """청크 원문 구간 안에서 시작한 변환의 위치를 청크 기준으로 돌려준다.
+
+    같은 종류의 변환이 바로 붙어 있으면 (제로폭 문자 5개 연속 등) 한 구간으로 합친다.
+    개수는 TransformLog 에 따로 있으니 위치 목록은 짧게 유지한다.
+    """
+    out: list[TransformSpan] = []
+    for ev in sorted(doc.events, key=lambda e: (e.start, e.end)):
+        if not r0 <= ev.start < r1:
+            continue
+        s, e = ev.start - r0, min(ev.end, r1) - r0
+        last = out[-1] if out else None
+        if last and last.kind == ev.kind and last.note == ev.note and last.span.end == s:
+            out[-1] = last.model_copy(update={"span": Span(start=last.span.start, end=e)})
+        else:
+            out.append(TransformSpan(kind=ev.kind, span=Span(start=s, end=e), note=ev.note))
+    return out
