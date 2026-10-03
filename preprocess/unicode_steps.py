@@ -1,17 +1,20 @@
-"""③ 유니코드 정규화 단계 5개. normalize.STEPS 에 이 순서대로 들어간다.
+"""③ 유니코드 정규화 단계 6개. normalize.STEPS 에 이 순서대로 들어간다.
 
-  1. decode_tag_chars   태그 문자 해독      → tag_chars_decoded, decoded_segments
-  2. remove_bidi        양방향 제어문자 제거 → bidi_removed
-  3. remove_invisible   보이지 않는 문자 제거 → zero_width_removed, hangul_filler_removed,
-                                                variation_selector_removed, emoji_zwj
-  4. apply_nfkc         NFKC + 한글 자모 후처리 → nfkc_changed
-  5. tidy_whitespace    줄바꿈·공백 정리 (기록 안 함, 의심 신호가 아님)
+  1. decode_tag_chars   태그 문자 해독        → tag_chars_decoded, decoded_segments
+  2. remove_bidi        양방향 제어문자 제거   → bidi_removed
+  3. remove_invisible   보이지 않는 문자 제거  → zero_width_removed, hangul_filler_removed,
+                                                  variation_selector_removed, emoji_zwj
+  4. apply_nfkc         NFKC (호환 자모는 건드리지 않음) → nfkc_changed
+  5. assemble_jamo      쪼갠 자모 조립 (ㄱㅗㅇㄱㅕㄱ → 공격) → jamo_assembled
+  6. tidy_whitespace    줄바꿈·공백 정리 (기록 안 함, 의심 신호가 아님)
 
 순서가 중요하다. 태그 문자와 양방향 제어문자도 유니코드 분류가 Cf(형식 문자)라서,
 3번의 "Cf 는 지운다" 규칙이 먼저 돌면 태그 문자는 해독 전에 사라지고 양방향 제어문자는
-제로폭 문자로 잘못 세어진다.
+제로폭 문자로 잘못 세어진다. 자모 조립은 제로폭 문자를 지운 뒤에 해야
+"ㅁ<제로폭>ㅜㅅㅣ" 처럼 섞어 쓴 우회도 한 덩어리로 보인다.
 """
 
+import re
 import unicodedata
 
 from preprocess.context import Context
@@ -163,12 +166,18 @@ def remove_invisible(ctx: Context) -> None:
         ctx.record(kind, kind_spans)
 
 
-# ── 4. NFKC + 한글 자모 후처리 ──
+# ── 4. NFKC ──
 
 
 def _is_conjoining_jamo(ch: str) -> bool:
     cp = ord(ch)
     return 0x1100 <= cp <= 0x11FF or 0xA960 <= cp <= 0xA97F or 0xD7B0 <= cp <= 0xD7FF
+
+
+def _is_jamo_letter(ch: str) -> bool:
+    """호환 자모(ㄱ, ㅏ …) 또는 반각 자모(ﾡ …)."""
+    cp = ord(ch)
+    return 0x3131 <= cp <= 0x318E or 0xFFA1 <= cp <= 0xFFDC
 
 
 def _build_compat_jamo() -> dict[str, str]:
@@ -182,6 +191,12 @@ def _build_compat_jamo() -> dict[str, str]:
 
 
 _TO_COMPAT_JAMO = _build_compat_jamo()
+# 반각 자모 → 호환 자모. 예: U+FFA1(ﾡ) → U+3131(ㄱ)
+_HALFWIDTH_TO_COMPAT = {
+    chr(cp): _TO_COMPAT_JAMO[unicodedata.normalize("NFKC", chr(cp))]
+    for cp in range(0xFFA1, 0xFFDD)
+    if unicodedata.normalize("NFKC", chr(cp)) in _TO_COMPAT_JAMO
+}
 
 
 def _nfkc(s: str) -> str:
@@ -193,12 +208,12 @@ def _cannot_join_back(ch: str) -> bool:
     return ch < "\x80" or 0xAC00 <= ord(ch) <= 0xD7A3
 
 
-def _nfkc_segments(text: str) -> list[tuple[int, int]]:
+def _nfkc_segments(text: str, base: int = 0) -> list[tuple[int, int]]:
     """NFKC 를 조각마다 따로 해도 전체 결과와 같아지도록 문자열을 나눈다.
 
     결합 문자(악센트 등)는 앞 글자와 같은 조각에 둔다. 이웃 조각끼리 NFKC 에서 합쳐지면
-    (예: 호환 자모 ㅁ + ㅜ → 무) 한 조각으로 묶는다. ASCII 와 완성형 음절은 앞 조각과
-    합쳐질 일이 없어서 비교 없이 바로 끊는다 (긴 한국어 문서도 빠르게 처리하기 위해).
+    한 조각으로 묶는다. ASCII 와 완성형 음절은 앞 조각과 합쳐질 일이 없어서 비교 없이
+    바로 끊는다 (긴 한국어 문서도 빠르게 처리하기 위해). 돌려주는 위치에는 base 를 더한다.
     """
     starts = [i for i, ch in enumerate(text) if i == 0 or unicodedata.combining(ch) == 0]
     bounds = list(zip(starts, starts[1:] + [len(text)], strict=True))
@@ -215,32 +230,153 @@ def _nfkc_segments(text: str) -> list[tuple[int, int]]:
         else:
             cur_e = e
     out.append((cur_s, cur_e))
+    if "".join(_nfkc(text[s:e]) for s, e in out) != _nfkc(text):
+        out = [(0, len(text))]  # 드문 경우의 안전장치: 위치는 거칠어져도 결과는 정확하게
+    return [(s + base, e + base) for s, e in out]
+
+
+def _split_jamo_runs(text: str) -> list[tuple[int, int, bool]]:
+    """문자열을 (시작, 끝, 자모 덩어리인가) 구간으로 나눈다."""
+    out: list[tuple[int, int, bool]] = []
+    i = 0
+    while i < len(text):
+        is_jamo = _is_jamo_letter(text[i])
+        j = i + 1
+        while j < len(text) and _is_jamo_letter(text[j]) == is_jamo:
+            j += 1
+        out.append((i, j, is_jamo))
+        i = j
     return out
 
 
 def apply_nfkc(ctx: Context) -> None:
-    """NFKC 정규화. 전각 ｉｇｎ → ign, ㈜ → (주), 자모 분리 ㅁㅜㅅㅣ → 무시.
+    """NFKC 정규화. 전각 ｉｇｎ → ign, 수학 영숫자 → ign, ㈜ → (주), NFD 한글 → 완성형.
 
-    부작용 하나를 되돌린다. NFKC 는 ㅋ(호환 자모)을 ᄏ(조합형 초성)으로 바꾸는데,
-    음절로 합쳐지지 못하고 혼자 남으면 정상 텍스트(ㅋㅋㅋ)가 다른 글자가 되어 토큰화가
-    달라진다. 그래서 원래 호환 자모였다가 혼자 남은 것은 호환 자모로 되돌린다.
+    호환 자모(ㄱ, ㅏ …)는 NFKC 에 넣지 않는다. NFKC 는 자음+모음만 합치고 받침은 못
+    붙여서 ㄱㅗㅇ → 고ㅇ 처럼 반쪽만 풀고, 정상 채팅 ㅋㅠㅠ → 큐ㅠ 까지 바꿔 버린다.
+    자모 조립은 다음 단계(assemble_jamo)가 확실할 때만 한다. 반각 자모(ﾡ)는 호환 자모로만
+    바꿔 둔다.
     """
     text = ctx.tt.text
     if unicodedata.is_normalized("NFKC", text):
         return
-    segments = _nfkc_segments(text)
-    if "".join(_nfkc(text[s:e]) for s, e in segments) != _nfkc(text):
-        segments = [(0, len(text))]  # 드문 경우의 안전장치: 위치는 거칠어져도 결과는 정확하게
 
     edits = []
-    for s, e in segments:
-        seg = text[s:e]
-        new = _nfkc(seg)
-        if not any(_is_conjoining_jamo(c) for c in seg):
-            new = "".join(_TO_COMPAT_JAMO.get(c, c) for c in new)
-        if new != seg:
-            edits.append(Edit(s, e, new))
+    for s, e, is_jamo in _split_jamo_runs(text):
+        if is_jamo:
+            for i in range(s, e):
+                if text[i] in _HALFWIDTH_TO_COMPAT:
+                    edits.append(Edit(i, i + 1, _HALFWIDTH_TO_COMPAT[text[i]]))
+            continue
+        for ss, se in _nfkc_segments(text[s:e], base=s):
+            seg = text[ss:se]
+            new = _nfkc(seg)
+            if not any(_is_conjoining_jamo(c) for c in seg):
+                # ㈀ → (ᄀ) 처럼 조합형 자모가 새로 생기면 호환 자모로 되돌린다 → (ㄱ)
+                new = "".join(_TO_COMPAT_JAMO.get(c, c) for c in new)
+            if new != seg:
+                edits.append(Edit(ss, se, new))
     ctx.record("nfkc_changed", ctx.tt.apply(edits))
+
+
+# ── 5. 자모 조립 ──
+
+_CHO = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
+_JUNG = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ"
+_JONG = ("", *"ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ")
+_VOWEL_PAIRS = {
+    ("ㅗ", "ㅏ"): "ㅘ",
+    ("ㅗ", "ㅐ"): "ㅙ",
+    ("ㅗ", "ㅣ"): "ㅚ",
+    ("ㅜ", "ㅓ"): "ㅝ",
+    ("ㅜ", "ㅔ"): "ㅞ",
+    ("ㅜ", "ㅣ"): "ㅟ",
+    ("ㅡ", "ㅣ"): "ㅢ",
+}
+_FINAL_PAIRS = {
+    ("ㄱ", "ㅅ"): "ㄳ",
+    ("ㄴ", "ㅈ"): "ㄵ",
+    ("ㄴ", "ㅎ"): "ㄶ",
+    ("ㄹ", "ㄱ"): "ㄺ",
+    ("ㄹ", "ㅁ"): "ㄻ",
+    ("ㄹ", "ㅂ"): "ㄼ",
+    ("ㄹ", "ㅅ"): "ㄽ",
+    ("ㄹ", "ㅌ"): "ㄾ",
+    ("ㄹ", "ㅍ"): "ㄿ",
+    ("ㄹ", "ㅎ"): "ㅀ",
+    ("ㅂ", "ㅅ"): "ㅄ",
+}
+_HANGUL_WORD = re.compile(r"[\uac00-\ud7a3\u3131-\u318e]+")
+_JAMO_RUN = re.compile(r"[\u3131-\u318e]+")
+
+
+def _assemble(run: str) -> list[tuple[int, int, str]]:
+    """자모 덩어리를 한글 자판(두벌식) 규칙으로 조립한다.
+
+    (덩어리 안 시작, 끝, 결과 글자) 목록을 돌려준다. 음절이 못 된 자모는 그대로 1글자.
+    받침 후보 자음 뒤에 모음이 오면 받침이 아니라 다음 음절의 초성으로 넘긴다 (자판과 같음).
+    """
+    out: list[tuple[int, int, str]] = []
+    n = len(run)
+
+    def vowel_at(k: int) -> bool:
+        return k < n and run[k] in _JUNG
+
+    i = 0
+    while i < n:
+        start = i
+        if run[i] in _CHO and vowel_at(i + 1):
+            cho, jung = run[i], run[i + 1]
+            i += 2
+            if i < n and (jung, run[i]) in _VOWEL_PAIRS:
+                jung = _VOWEL_PAIRS[(jung, run[i])]
+                i += 1
+            jong = ""
+            if i < n and run[i] in _JONG and not vowel_at(i + 1):
+                jong = run[i]
+                i += 1
+                if i < n and (jong, run[i]) in _FINAL_PAIRS and not vowel_at(i + 1):
+                    jong = _FINAL_PAIRS[(jong, run[i])]
+                    i += 1
+            code = (_CHO.index(cho) * 21 + _JUNG.index(jung)) * 28 + _JONG.index(jong)
+            out.append((start, i, chr(0xAC00 + code)))
+        else:
+            out.append((i, i + 1, run[i]))
+            i += 1
+    return out
+
+
+def assemble_jamo(ctx: Context) -> None:
+    """쪼개 쓴 자모를 음절로 조립한다. ㄱㅗㅇㄱㅕㄱ → 공격, 무ㅅㅣ해 → 무시해.
+
+    정상 채팅(ㅋㅋㅋㅠㅠ, 좋아ㅇㅋ)을 바꾸지 않도록 확실할 때만 조립한다.
+    - 원문에서 자모로 쓰인 덩어리 안에서만 조립한다. 완성형 음절(좋아)에는 받침을
+      붙이지 않는다. 그래서 '좋아ㅇㅋ' 의 ㅇ 이 '앙' 이 되지 않는다.
+    - 한글 단어(공백 등으로 나뉜 덩어리) 단위로, 조립한 결과에 자모가 하나도 남지 않고
+      음절이 2개 이상일 때만 채택한다. 아니면 그 단어는 원문 그대로 둔다.
+    알려진 한계: 한 음절 단어(ㄷㅏㄹㄱ), 띄어 쓴 자모(ㅁ ㅜ ㅅ ㅣ)는 풀지 않는다.
+    """
+    text = ctx.tt.text
+    edits: list[Edit] = []
+    for word in _HANGUL_WORD.finditer(text):
+        runs = list(_JAMO_RUN.finditer(word.group()))
+        if not runs:
+            continue
+        word_edits: list[Edit] = []
+        leftover = 0
+        new_syllables = 0
+        for run in runs:
+            base = word.start() + run.start()
+            for s, e, out in _assemble(run.group()):
+                if e - s == 1:
+                    leftover += 1
+                else:
+                    new_syllables += 1
+                    word_edits.append(Edit(base + s, base + e, out))
+        old_syllables = sum(1 for c in word.group() if 0xAC00 <= ord(c) <= 0xD7A3)
+        if leftover == 0 and old_syllables + new_syllables >= 2:
+            edits.extend(word_edits)
+    ctx.record("jamo_assembled", ctx.tt.apply(edits))
 
 
 # ── 5. 공백 정리 ──
