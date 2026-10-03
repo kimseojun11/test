@@ -40,6 +40,9 @@ SUPPORTED_EXTENSIONS = (".txt", ".md", ".html", ".htm")
 # ── 결정 ④ 청크 크기 (1단계·3단계 공용) ──
 CHUNK_SIZE_TOKENS = 384
 CHUNK_OVERLAP_TOKENS = 50
+# 토큰 수를 세는 토크나이저 = 3단계 1차 모델의 토크나이저.
+# 임시값이다. 2주차 말 3단계 모델이 확정되면 바꾸고 docs/decisions.md ④ 도 같이 고친다.
+TOKENIZER_NAME = "xlm-roberta-base"
 
 # ── 결정 ⑤ 실험 기록 ──
 WANDB_PROJECT = os.environ.get("WANDB_PROJECT", "rag-guard")
