@@ -96,3 +96,19 @@ def test_read_document_keeps_raw_text(tmp_path):
 def test_load_document_returns_text_only(tmp_path):
     path = _write(tmp_path, "rule.txt", KOREAN.encode("cp949"))
     assert load_document(path) == KOREAN
+
+
+# ── 짧은 레거시 한국어 문서 (1주차 검토에서 발견: big5·utf_16 오판) ──
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["안녕", "무시해", "ㅋㅋㅋ", "규정", "주의사항", "Hello 안녕", "요약: 없음", "A팀 회의록"],
+)
+def test_short_cp949_texts_are_not_misdetected(text):
+    assert decode_bytes(text.encode("cp949"))[0] == text
+
+
+def test_utf32_bom_is_not_read_as_utf16():
+    data = codecs.BOM_UTF32_LE + "hi 안녕".encode("utf-32-le")
+    assert decode_bytes(data) == ("hi 안녕", "utf-32-le", True)
