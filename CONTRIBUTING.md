@@ -24,12 +24,11 @@ uv run ruff check .                # 코드 검사
 
 ## 규칙
 
-1. `common/` 을 고치는 PR 은 팀원 전원의 리뷰를 받습니다.
+1. `main` 에 직접 push 하지 않고 작업 브랜치에서 PR 을 올립니다.
 2. `common/config.py` 의 값을 바꾸면 `docs/decisions.md` 도 같은 PR 에서 고칩니다.
 3. 학습·평가 스크립트는 맨 위에서 `common.config.set_seed()` 를 호출합니다.
 4. 의존성은 `uv add` 로 추가하고 `pyproject.toml` 과 `uv.lock` 을 함께 커밋합니다.
-5. `main` 에 직접 push 하지 않고 작업 브랜치에서 PR 을 올립니다.
-6. 정리본(`text`)에서 찾은 위치는 `Chunk.raw_span()` 으로 원문 위치로 바꿔서 내보냅니다.
+5. 정리본(`text`)에서 찾은 위치는 `Chunk.raw_span()` 으로 원문 위치로 바꿔서 내보냅니다.
 
 ## 환경 변수
 
