@@ -22,6 +22,8 @@ from preprocess.normalize import resolve_format
 # 맨 앞 바이트로 확실히 알 수 있는 인코딩. 윈도우 메모장의 "유니코드" 저장이 UTF-16 이다
 _BOMS = (
     (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF32_LE, "utf-32-le"),  # UTF-16 LE BOM(FF FE)으로 시작하므로 먼저 본다
+    (codecs.BOM_UTF32_BE, "utf-32-be"),
     (codecs.BOM_UTF16_LE, "utf-16-le"),
     (codecs.BOM_UTF16_BE, "utf-16-be"),
 )
@@ -77,7 +79,26 @@ def decode_bytes(data: bytes) -> tuple[str, str, bool]:
         # BOM 없는 UTF-16 은 드물고, 대부분 이미지·실행 파일 같은 바이너리다
         raise UnsupportedDocumentError("글자 파일이 아닌 것 같습니다 (0x00 바이트 포함)")
 
+    # 짧은 한국어 문서는 charset-normalizer 가 big5·utf_16 으로 오판한다 ("안녕" → "寰喟").
+    # 한국어 문서가 대부분이므로 CP949(EUC-KR 포함)를 먼저 시도하고, 한글 비율로 확인한다
+    try:
+        text = data.decode("cp949")
+        if _looks_korean(text):
+            return text, "cp949", False
+    except UnicodeDecodeError:
+        pass
+
     best = from_bytes(data).best()
-    if best is None:
+    if best is None or best.encoding.startswith(("utf_16", "utf_32")):
+        # BOM 도 0x00 도 없는 UTF-16/32 판별은 오판이다
         raise UnsupportedDocumentError("문자 인코딩을 알아낼 수 없습니다")
     return str(best), best.encoding, False
+
+
+def _looks_korean(text: str) -> bool:
+    """ASCII 가 아닌 글자 중 한글(음절·호환 자모)이 60% 이상인가."""
+    non_ascii = [c for c in text if ord(c) >= 0x80]
+    if not non_ascii:
+        return True
+    hangul = sum(1 for c in non_ascii if "\uac00" <= c <= "\ud7a3" or "\u3131" <= c <= "\u318e")
+    return hangul / len(non_ascii) >= 0.6

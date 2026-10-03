@@ -25,10 +25,23 @@ from preprocess.tracked import Edit
 _TAG_FIRST, _TAG_LAST = 0xE0000, 0xE007F
 _CANCEL_TAG = "\U000e007f"
 _BLACK_FLAG = "\U0001f3f4"  # 🏴 + 태그 문자 = 잉글랜드·스코틀랜드 같은 지역 깃발 이모지
+# 실제로 쓰이는(RGI) 지역 깃발은 이 셋뿐이다.
+# 모양만 보고 판정하면 🏴 + 명령문 + 취소 태그로 숨길 수 있다
+_RGI_SUBDIVISION_FLAGS = frozenset({"gbeng", "gbsct", "gbwls"})
 
 
 def _is_tag(ch: str) -> bool:
     return _TAG_FIRST <= ord(ch) <= _TAG_LAST
+
+
+def _is_skippable(ch: str) -> bool:
+    """태그 문자 사이에 끼워 넣어도 화면에 안 보이는 글자 (태그 자체는 제외)."""
+    return not _is_tag(ch) and (
+        ch in _BIDI
+        or ch in _HANGUL_FILLERS
+        or _is_variation_selector(ch)
+        or unicodedata.category(ch) == "Cf"
+    )
 
 
 def decode_tag_chars(ctx: Context) -> None:
@@ -46,21 +59,25 @@ def decode_tag_chars(ctx: Context) -> None:
         if not _is_tag(text[i]):
             i += 1
             continue
-        j = i
-        while j < len(text) and _is_tag(text[j]):
+        # 태그 사이에 제로폭·변형 선택자 등을 끼워 해독 결과를 조각내는 우회를 막는다.
+        # 끼어 있는 글자는 여기서 지우지 않는다 (뒤 단계가 지우고 따로 센다)
+        j = last = i
+        while j < len(text) and (_is_tag(text[j]) or _is_skippable(text[j])):
+            if _is_tag(text[j]):
+                last = j
             j += 1
-        decoded = "".join(
-            chr(ord(c) - _TAG_FIRST) for c in text[i:j] if 0x20 <= ord(c) - _TAG_FIRST <= 0x7E
-        )
+        j = last + 1
+        tag_pos = [k for k in range(i, j) if _is_tag(text[k])]
+        codes = [ord(text[k]) - _TAG_FIRST for k in tag_pos]
+        decoded = "".join(chr(c) for c in codes if 0x20 <= c <= 0x7E)
         is_flag = (
             i > 0
             and text[i - 1] == _BLACK_FLAG
             and text[j - 1] == _CANCEL_TAG
-            and decoded.isalnum()
-            and decoded.islower()
+            and decoded in _RGI_SUBDIVISION_FLAGS
         )
         if not is_flag:
-            suspicious.extend(range(i, j))
+            suspicious.extend(tag_pos)
             if decoded:
                 ctx.add_decoded("unicode_tag", tt.raw_span(i, j), decoded)
         i = j
@@ -90,7 +107,7 @@ def remove_bidi(ctx: Context) -> None:
 # ── 3. 보이지 않는 문자 ──
 
 _ZWJ = "\u200d"
-_VS16 = "\ufe0f"
+_VS15, _VS16 = "\ufe0e", "\ufe0f"
 _KEYCAP = "\u20e3"
 _HANGUL_FILLERS = frozenset("\u3164\u115f\u1160\uffa0")
 # Cf 가 아니라서 분류 규칙으로 안 잡히는 보이지 않는 문자
@@ -146,7 +163,7 @@ def remove_invisible(ctx: Context) -> None:
             kind = "hangul_filler_removed"
         elif _is_variation_selector(ch):
             prev = text[i - 1] if i else ""
-            normal_emoji = ch == _VS16 and (
+            normal_emoji = ch in (_VS15, _VS16) and (
                 (prev and _is_picto(prev)) or (prev in "0123456789#*" and prev and nxt == _KEYCAP)
             )
             kind = None if normal_emoji else "variation_selector_removed"
@@ -197,6 +214,22 @@ _HALFWIDTH_TO_COMPAT = {
     for cp in range(0xFFA1, 0xFFDD)
     if unicodedata.normalize("NFKC", chr(cp)) in _TO_COMPAT_JAMO
 }
+
+
+# 현대 한글 조합형 자모: 초성 U+1100~1112, 중성 U+1161~1175, 종성 U+11A8~11C2
+_STRAY_JAMO = re.compile("[\u1100-\u1112\u1161-\u1175\u11a8-\u11c2]")
+
+
+def _build_stray_to_compat() -> dict[str, str]:
+    """홀로 남은 현대 조합형 자모 → 호환 자모. 종성은 이름으로 짝을 찾는다 (ᆨ → ㄱ)."""
+    table = {c: v for c, v in _TO_COMPAT_JAMO.items() if _STRAY_JAMO.match(c)}
+    for cp in range(0x11A8, 0x11C3):
+        name = unicodedata.name(chr(cp)).replace("JONGSEONG", "LETTER")
+        table.setdefault(chr(cp), unicodedata.lookup(name))
+    return table
+
+
+_STRAY_TO_COMPAT = _build_stray_to_compat()
 
 
 def _nfkc(s: str) -> str:
@@ -258,7 +291,7 @@ def apply_nfkc(ctx: Context) -> None:
     바꿔 둔다.
     """
     text = ctx.tt.text
-    if unicodedata.is_normalized("NFKC", text):
+    if unicodedata.is_normalized("NFKC", text) and not _STRAY_JAMO.search(text):
         return
 
     edits = []
@@ -274,6 +307,10 @@ def apply_nfkc(ctx: Context) -> None:
             if not any(_is_conjoining_jamo(c) for c in seg):
                 # ㈀ → (ᄀ) 처럼 조합형 자모가 새로 생기면 호환 자모로 되돌린다 → (ㄱ)
                 new = "".join(_TO_COMPAT_JAMO.get(c, c) for c in new)
+            else:
+                # NFKC 뒤에도 남은 현대 조합형 자모는 음절을 못 이룬 '홀로 남은' 자모다.
+                # 호환 자모로 바꿔야 ᄆㅜᄉㅣ·ㅁᅮㅅᅵ 처럼 섞어 쓴 우회를 assemble_jamo 가 조립한다
+                new = "".join(_STRAY_TO_COMPAT.get(c, c) for c in new)
             if new != seg:
                 edits.append(Edit(ss, se, new))
     ctx.record("nfkc_changed", ctx.tt.apply(edits))
