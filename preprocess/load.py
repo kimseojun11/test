@@ -1,15 +1,83 @@
-"""문서를 읽어 문자열로 돌려준다. (스텁)
+"""문서 파일을 읽어 문자열로 돌려준다 (① 입력 디코딩).
 
-TODO(1단계): 바이트로 읽고 직접 디코딩하도록 바꾼다.
-- UTF-8 BOM 은 디코딩 단계에서 제거 (변환 기록에는 넣지 않음)
-- read_text() 의 유니버설 뉴라인 변환(\\r\\n → \\n) 을 끄고, 줄바꿈 통일은
-  정규화 단계에서 위치를 추적하며 처리
-- CP949/EUC-KR 등 UTF-8 이 아닌 파일도 읽을 수 있어야 함 (charset-normalizer)
+원문은 읽는 순간부터 바뀌면 안 된다. 그래서
+- 바이트로 읽고 직접 디코딩한다. read_text() 는 \\r\\n 을 \\n 으로 몰래 바꾼다.
+- 줄바꿈은 여기서 건드리지 않는다. 통일은 정규화(③ 공백 정리)에서 위치를 추적하며 한다.
+- 맨 앞 BOM 은 지운다. 남겨두면 ③ 에서 제로폭 문자로 세어 정상 파일이 의심 신호를 받는다.
+- UTF-8 이 아니면 charset-normalizer 로 판별한다 (CP949/EUC-KR 등).
+- 지원 형식(decisions.md ②)이 아니면 거부한다.
+
+원문 좌표의 기준은 여기서 돌려준 문자열이다 (바이트가 아님, decisions.md ⑥).
 """
 
+import codecs
+from dataclasses import dataclass
 from pathlib import Path
+
+from charset_normalizer import from_bytes
+
+from common.config import SUPPORTED_EXTENSIONS
+from preprocess.normalize import resolve_format
+
+# 맨 앞 바이트로 확실히 알 수 있는 인코딩. 윈도우 메모장의 "유니코드" 저장이 UTF-16 이다
+_BOMS = (
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+
+
+class UnsupportedDocumentError(ValueError):
+    """지원하지 않는 형식이거나, 글자로 읽을 수 없는 파일."""
+
+
+@dataclass(frozen=True)
+class LoadedDocument:
+    text: str  # 원문. 이후 모든 위치의 기준
+    fmt: str  # "txt" / "md" / "html"
+    encoding: str  # 실제로 쓴 인코딩 (예: "utf-8", "cp949")
+    had_bom: bool
+
+
+def read_document(path: str | Path) -> LoadedDocument:
+    """파일을 읽어 원문과 형식·인코딩 정보를 함께 돌려준다."""
+    path = Path(path)
+    ext = path.suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise UnsupportedDocumentError(
+            f"지원하지 않는 형식입니다: {path.name} (지원: {', '.join(SUPPORTED_EXTENSIONS)})"
+        )
+    text, encoding, had_bom = decode_bytes(path.read_bytes())
+    return LoadedDocument(
+        text=text, fmt=resolve_format(text, ext), encoding=encoding, had_bom=had_bom
+    )
 
 
 def load_document(path: str | Path) -> str:
-    """경로의 문서를 읽어 문자열로 돌려준다."""
-    return Path(path).read_text(encoding="utf-8")
+    """원문 문자열만 돌려준다. 형식도 필요하면 read_document() 를 쓴다."""
+    return read_document(path).text
+
+
+def decode_bytes(data: bytes) -> tuple[str, str, bool]:
+    """바이트를 (원문, 인코딩 이름, BOM 이 있었는지) 로 바꾼다."""
+    for bom, encoding in _BOMS:
+        if data.startswith(bom):
+            body = data[len(bom) :]
+            try:
+                return body.decode(encoding), encoding, True
+            except UnicodeDecodeError as e:
+                raise UnsupportedDocumentError(f"{encoding} BOM 이 있지만 읽을 수 없습니다") from e
+
+    try:
+        return data.decode("utf-8"), "utf-8", False
+    except UnicodeDecodeError:
+        pass
+
+    if b"\x00" in data:
+        # BOM 없는 UTF-16 은 드물고, 대부분 이미지·실행 파일 같은 바이너리다
+        raise UnsupportedDocumentError("글자 파일이 아닌 것 같습니다 (0x00 바이트 포함)")
+
+    best = from_bytes(data).best()
+    if best is None:
+        raise UnsupportedDocumentError("문자 인코딩을 알아낼 수 없습니다")
+    return str(best), best.encoding, False
