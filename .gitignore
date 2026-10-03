@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 데이터·로그
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 실험·모델 산출물
+wandb/
+checkpoints/
+*.pt
+*.safetensors
+
+# 비밀값
+.env
+.env.*
+
+# 편집기·OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

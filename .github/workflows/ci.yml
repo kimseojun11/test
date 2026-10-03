@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: 의존성 설치 (잠긴 버전 그대로)
+        run: uv sync --locked
+
+      - name: ruff 검사
+        run: uv run ruff check .
+
+      - name: ruff 포맷 검사
+        run: uv run ruff format --check .
+
+      - name: pytest
+        run: uv run pytest -v
+
+      - name: pipeline.run 스모크 테스트
+        run: |
+          echo "연차는 1년에 15일입니다." > /tmp/sample.txt
+          uv run python -m pipeline.run --file /tmp/sample.txt
