@@ -62,6 +62,7 @@ def raw_bounds(doc: NormalizedDoc, start: int, end: int) -> tuple[int, int]:
 
 def _make_chunk(doc_id: str, doc: NormalizedDoc, k: int, start: int, end: int) -> Chunk:
     r0, r1 = raw_bounds(doc, start, end)
+    segments = _segments_in(doc, r0, r1)
     return Chunk(
         chunk_id=f"{doc_id}-c{k}",
         doc_id=doc_id,
@@ -69,8 +70,8 @@ def _make_chunk(doc_id: str, doc: NormalizedDoc, k: int, start: int, end: int) -
         text=doc.text[start:end],
         span=Span(start=r0, end=r1),
         offset_map=[s - r0 for s in doc.starts[start:end]],
-        decoded_segments=_segments_in(doc, r0, r1),
-        transform_log=_log_in(doc, r0, r1),
+        decoded_segments=segments,
+        transform_log=_log_in(doc, r0, r1, n_decoded=len(segments)),
         transform_spans=_spans_in(doc, r0, r1),
         meta={
             "normalize_version": doc.version,
@@ -91,14 +92,15 @@ def _segments_in(doc: NormalizedDoc, r0: int, r1: int) -> list[DecodedSegment]:
     return out
 
 
-def _log_in(doc: NormalizedDoc, r0: int, r1: int) -> TransformLog:
-    """청크 원문 구간 안에서 시작한 변환만 센다."""
+def _log_in(doc: NormalizedDoc, r0: int, r1: int, n_decoded: int) -> TransformLog:
+    """청크 원문 구간 안에서 시작한 변환만 센다.
+
+    decoded_count 는 이 청크에 들어간 복원 결과(decoded_segments) 개수로 채운다.
+    복원 방법과 상관없이 세므로 개수와 목록이 어긋나지 않는다.
+    """
     counts = Counter(ev.kind for ev in doc.events if r0 <= ev.start < r1)
-    values: dict[str, int | bool] = {}
-    for name, info in TransformLog.model_fields.items():
-        if name in counts:
-            values[name] = counts[name] > 0 if info.annotation is bool else counts[name]
-    return TransformLog(**values)
+    counts["decoded_count"] = n_decoded
+    return TransformLog(**counts)
 
 
 def _spans_in(doc: NormalizedDoc, r0: int, r1: int) -> list[TransformSpan]:

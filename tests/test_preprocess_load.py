@@ -89,7 +89,7 @@ def test_unsupported_extension_rejected(tmp_path, name):
 def test_read_document_keeps_raw_text(tmp_path):
     path = _write(tmp_path, "rule.txt", codecs.BOM_UTF8 + KOREAN.encode())
     doc = read_document(path)
-    assert doc.text == KOREAN  # BOM 만 빠지고 \r\n 은 그대로
+    assert doc.raw == KOREAN  # BOM 만 빠지고 \r\n 은 그대로
     assert (doc.encoding, doc.had_bom) == ("utf-8", True)
 
 

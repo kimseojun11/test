@@ -312,7 +312,9 @@ def apply_nfkc(ctx: Context) -> None:
                 # 호환 자모로 바꿔야 ᄆㅜᄉㅣ·ㅁᅮㅅᅵ 처럼 섞어 쓴 우회를 assemble_jamo 가 조립한다
                 new = "".join(_STRAY_TO_COMPAT.get(c, c) for c in new)
             if new != seg:
-                edits.append(Edit(ss, se, new))
+                # 여러 글자 묶음(결합 문자 등)은 길이가 같아도 글자끼리 짝이 맞지 않을 수 있다.
+                # (Ⅻ̈́ → XIḮ, 결합 문자 순서 정렬) 이때는 묶음 전체를 가리키게 한다
+                edits.append(Edit(ss, se, new, block=len(seg) > 1))
     ctx.record("nfkc_changed", ctx.tt.apply(edits))
 
 

@@ -28,6 +28,7 @@
 - 관련 코드: `common/config.py` → `CHUNK_SIZE_TOKENS`, `CHUNK_OVERLAP_TOKENS`
 - (2026-10 추가) 토큰 수는 3단계 1차 모델의 토크나이저로 셉니다. 2주차 말 모델 확정 전까지는 임시로 `xlm-roberta-base` 를 씁니다. 384 에 특수 토큰([CLS], [SEP] 등)을 포함할지는 모델 확정 때 함께 정합니다.
 - 관련 코드: `common/config.py` → `TOKENIZER_NAME`
+- (2026-10 추가) 384 는 특수 토큰을 포함한 길이로 확정합니다. 후보 세 모델(mDeBERTa-v3-base, klue/roberta-base, xlm-roberta-base)은 모두 문장 하나에 특수 토큰 2개를 붙이므로, 청크 내용은 최대 382토큰입니다. 내용 길이는 `CHUNK_SIZE_TOKENS - (토크나이저가 붙이는 특수 토큰 수)` 로 계산하고, 데이터셋 샘플 길이 검사도 특수 토큰을 붙인 상태로 384 이하인지 봅니다.
 
 ## ⑤ 실험 기록
 
@@ -42,4 +43,5 @@
 - 변환 개수는 `TransformLog`, 위치는 `Chunk.transform_spans` 에 따로 담습니다. 로그 `reason` 칸에는 개수만 들어갑니다.
 - Python 은 3.11 로 고정합니다. 파이썬 버전마다 유니코드 데이터가 달라 NFKC 결과가 바뀔 수 있습니다(3.11 = 14.0, 3.12 = 15.0). 3단계 학습도 3.11 에서 하고, 청크 `meta.unicode_version` 으로 확인합니다.
 - (2026-10 추가) 쪼개 쓴 자모(`ㄱㅗㅇㄱㅕㄱ`)는 NFKC 가 아니라 별도 단계에서 조립합니다. 자모로 쓰인 덩어리 안에서만, 단어 단위로 "남는 자모 0개, 음절 2개 이상"일 때만 조립합니다. 정상 채팅(`ㅋㅋㅋㅠㅠ`, `좋아ㅇㅋ`)을 바꾸지 않기 위해서입니다. 조립한 음절 수는 `TransformLog.jamo_assembled` 에 남깁니다.
+- (2026-10 추가) `TransformLog.decoded_count` 는 그 청크의 `decoded_segments` 개수입니다. 복원 방법(Base64, 태그 문자 등)과 상관없이 셉니다. 종류는 `decoded_segments[].method` 로 구분하고, 숨긴 태그 글자 수는 `tag_chars_decoded` 에 따로 있습니다.
 - 관련 코드: `common/schema.py` → `TransformLog`, `TransformSpan`, `DecodedSegment`

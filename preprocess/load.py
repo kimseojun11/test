@@ -35,7 +35,7 @@ class UnsupportedDocumentError(ValueError):
 
 @dataclass(frozen=True)
 class LoadedDocument:
-    text: str  # 원문. 이후 모든 위치의 기준
+    raw: str  # 원문. 이후 모든 위치의 기준 (정리본 Chunk.text 와 헷갈리지 않게 raw)
     fmt: str  # "txt" / "md" / "html"
     encoding: str  # 실제로 쓴 인코딩 (예: "utf-8", "cp949")
     had_bom: bool
@@ -49,15 +49,13 @@ def read_document(path: str | Path) -> LoadedDocument:
         raise UnsupportedDocumentError(
             f"지원하지 않는 형식입니다: {path.name} (지원: {', '.join(SUPPORTED_EXTENSIONS)})"
         )
-    text, encoding, had_bom = decode_bytes(path.read_bytes())
-    return LoadedDocument(
-        text=text, fmt=resolve_format(text, ext), encoding=encoding, had_bom=had_bom
-    )
+    raw, encoding, had_bom = decode_bytes(path.read_bytes())
+    return LoadedDocument(raw=raw, fmt=resolve_format(raw, ext), encoding=encoding, had_bom=had_bom)
 
 
 def load_document(path: str | Path) -> str:
     """원문 문자열만 돌려준다. 형식도 필요하면 read_document() 를 쓴다."""
-    return read_document(path).text
+    return read_document(path).raw
 
 
 def decode_bytes(data: bytes) -> tuple[str, str, bool]:

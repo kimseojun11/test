@@ -9,6 +9,7 @@ from common.schema import (
     Span,
     StageResult,
     TransformLog,
+    TransformSpan,
     Verdict,
 )
 
@@ -38,6 +39,13 @@ DECODED_SEGMENT = DecodedSegment(
 
 TRANSFORM_LOG = TransformLog(zero_width_removed=RAW_DOC.count(ZWSP), decoded_count=1)
 
+# 지운 제로폭 문자의 원문 위치 (web 이 '여기에 보이지 않는 문자가 있었다'를 표시할 때 쓴다)
+TRANSFORM_SPANS = [
+    TransformSpan(kind="zero_width_removed", span=Span(start=i, end=i + 1))
+    for i, ch in enumerate(RAW_DOC)
+    if ch == ZWSP
+]
+
 CHUNK = Chunk(
     chunk_id="example-c0",
     doc_id="example",
@@ -47,7 +55,9 @@ CHUNK = Chunk(
     offset_map=_KEPT,
     decoded_segments=[DECODED_SEGMENT],
     transform_log=TRANSFORM_LOG,
-    meta={"source": "examples.py", "ext": ".txt"},
+    transform_spans=TRANSFORM_SPANS,
+    # 키는 실제 청크와 같다. 값은 예시이고, 실제 값은 split_document() 가 채운다
+    meta={"normalize_version": "0.1", "unicode_version": "14.0.0", "fmt": "txt"},
 )
 
 # 정리본 위치 → raw_span() → 원문 위치 (제로폭 문자만큼 뒤로 밀린다)

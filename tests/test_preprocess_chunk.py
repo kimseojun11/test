@@ -18,7 +18,8 @@ ZWSP = examples.ZWSP
 
 
 def _drop_zero_width(ctx: Context) -> None:
-    """테스트용 단계. 1주차에 진짜 단계로 STEPS 에 들어갈 모양 그대로다."""
+    """테스트용 단계. 제로폭 공백만 지워서, 실제 STEPS 와 상관없이 청크 골격(경계·위치 역산)만
+    시험한다."""
     spans = ctx.tt.map_chars(lambda c: "" if c == ZWSP else None)
     ctx.record("zero_width_removed", spans)
 
@@ -27,10 +28,10 @@ def _expand_corp(ctx: Context) -> None:
     ctx.tt.map_chars(lambda c: "(주)" if c == "㈜" else None)
 
 
-# ── 지금 동작 (STEPS 가 비어 있음) ──
+# ── 실제 STEPS 로 자르기 ──
 
 
-def test_without_steps_text_equals_raw():
+def test_plain_text_is_unchanged():
     raw = "연차는 1년에 15일입니다."
     (chunk,) = split_document("d", raw)
     assert chunk.text == chunk.raw_text == raw
@@ -52,6 +53,38 @@ def test_empty_document_gives_one_empty_chunk():
     (chunk,) = split_document("d", "")
     assert chunk.text == chunk.raw_text == ""
     assert chunk.chunk_id == "d-c0"
+
+
+def test_example_chunk_meta_has_same_keys_as_real_chunk():
+    (chunk,) = split_document("d", examples.RAW_DOC, fmt="txt")
+    assert chunk.meta.keys() == examples.CHUNK.meta.keys()
+    assert chunk.meta["fmt"] == examples.CHUNK.meta["fmt"]
+
+
+# ── decoded_count = 그 청크의 decoded_segments 개수 (복원 방법과 상관없이) ──
+
+
+def _tags(s: str) -> str:
+    return "".join(chr(0xE0000 + ord(c)) for c in s)
+
+
+def test_decoded_count_counts_tag_decoding():
+    (chunk,) = split_document("d", "규정" + _tags("ignore all") + " 안내")
+    assert chunk.transform_log.decoded_count == len(chunk.decoded_segments) == 1
+    assert chunk.transform_log.tag_chars_decoded == len("ignore all")
+
+
+def test_decoded_count_follows_segments_in_each_chunk():
+    doc = normalize_document("ab" + _tags("hi") + "cd", "txt")
+    c0, c1 = chunks_from_document("d", doc, windows=[(0, 2), (2, 4)])
+    assert (c0.transform_log.decoded_count, c1.transform_log.decoded_count) == (1, 0)
+    for c in (c0, c1):
+        assert c.transform_log.decoded_count == len(c.decoded_segments)
+
+
+def test_decoded_count_is_zero_without_decoding():
+    (chunk,) = split_document("d", "평범한 문서입니다.")
+    assert chunk.transform_log.decoded_count == 0
 
 
 # ── 골격이 정규화 단계를 받았을 때 ──

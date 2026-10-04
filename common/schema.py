@@ -20,7 +20,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "0.2.1"
+SCHEMA_VERSION = "0.2.2"
 
 Label = Literal["benign", "injection"]
 Stage = Literal["preprocess", "rule", "stage1", "stage2"]
@@ -69,6 +69,8 @@ class TransformLog(_Model):
     jamo_assembled: int = Field(default=0, ge=0)  # 쪼갠 자모(ㄱㅗㅇ)를 조립해 만든 음절 수
     homoglyph_replaced: int = Field(default=0, ge=0)  # 닮은꼴 글자
     hidden_text_found: int = Field(default=0, ge=0)  # 숨김 텍스트. 지우지 않고 표시만 한다
+    # 이 청크의 decoded_segments 개수. 복원 방법(Base64·태그 문자 등)과 상관없이 센다.
+    # 종류는 decoded_segments[].method 로, 숨긴 태그 글자 수는 tag_chars_decoded 로 본다
     decoded_count: int = Field(default=0, ge=0)
 
 
