@@ -22,11 +22,16 @@ RawSpan = tuple[int, int]  # 원문 기준 [start, end)
 
 @dataclass(frozen=True)
 class Edit:
-    """현재 text 기준 [start, end) 를 new 로 바꾼다. new 가 "" 이면 삭제."""
+    """현재 text 기준 [start, end) 를 new 로 바꾼다. new 가 "" 이면 삭제.
+
+    block 이 True 면 길이가 같아도 새 글자 전부가 바뀐 구간 전체를 가리킨다.
+    글자끼리 짝이 맞는다고 보장할 수 없을 때 쓴다 (예: NFKC 가 Ⅻ̈́ → XIḮ 로 바꾸는 경우).
+    """
 
     start: int
     end: int
     new: str
+    block: bool = False
 
 
 class TrackedText:
@@ -68,7 +73,7 @@ class TrackedText:
 
             src = (self.starts[ed.start], self.ends[ed.end - 1])
             spans.append(src)
-            if len(ed.new) == ed.end - ed.start:
+            if len(ed.new) == ed.end - ed.start and not ed.block:
                 # 길이가 같으면 한 글자씩 짝지어 원래 구간을 그대로 넘긴다
                 starts.extend(self.starts[ed.start : ed.end])
                 ends.extend(self.ends[ed.start : ed.end])

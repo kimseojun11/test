@@ -44,6 +44,24 @@ def test_example_chunk_golden():
         assert chunk.raw_text[ts.span.start : ts.span.end] == ZWSP
     phrase = chunk.text.index(examples.ATTACK_PHRASE)
     assert chunk.raw_span(phrase, phrase + len(examples.ATTACK_PHRASE)) == examples.EVIDENCE_SPAN
+    assert chunk.transform_spans == examples.CHUNK.transform_spans
+    # ⑤ 인코딩 복원(decoded_count)만 빼고 나머지 개수는 지금도 예제와 같아야 한다
+    without_decoding = {"decoded_count"}
+    assert log.model_dump(exclude=without_decoding) == examples.TRANSFORM_LOG.model_dump(
+        exclude=without_decoding
+    )
+
+
+@pytest.mark.xfail(strict=True, reason="⑤ 인코딩 복원(Base64)은 3주차. 구현되면 이 표시를 지운다")
+def test_example_chunk_golden_full():
+    """가이드 기준: decoded_segments·transform_log 까지 examples.CHUNK 와 같아야 한다.
+
+    나머지(text·offset_map·transform_spans·다른 개수)는 위 테스트가 지금 확인하므로,
+    여기서는 ⑤ 에 해당하는 부분만 비교한다. 다른 이유로 실패가 가려지지 않게 하기 위해서다.
+    """
+    chunk, log = _log(examples.RAW_DOC)
+    assert chunk.decoded_segments == examples.CHUNK.decoded_segments
+    assert log == examples.TRANSFORM_LOG
 
 
 # ── 1. 태그 문자 ──
